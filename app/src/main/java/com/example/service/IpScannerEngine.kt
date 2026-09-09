@@ -97,7 +97,7 @@ class IpScannerEngine(private val context: Context) {
         val isAllRegions = filters.isEmpty() || filters.contains("ALL")
         val maxPerColoGlobal = config.maxPerColo
         val coloLimits = config.coloLimits
-        val coloCounts = ConcurrentHashMap<String, AtomicInteger>()
+        
 
         val goalMet = java.util.concurrent.atomic.AtomicBoolean(false)
         val scannedCounter = AtomicInteger(0)
@@ -183,13 +183,26 @@ class IpScannerEngine(private val context: Context) {
 
                                 if (matchesFilter) {
                                     val colo = scannedIp.dataCenter
-                                    val coloCount = coloCounts.getOrPut(colo) { AtomicInteger(0) }
                                     val limit = coloLimits[colo.uppercase()] ?: maxPerColoGlobal
+                                    
+                                    var isAddedOrUpdated = false
+                                    synchronized(resultsQueue) {
+                                        val currentRegionIps = resultsQueue.filter { it.dataCenter.equals(colo, true) }
+                                        if (currentRegionIps.size < limit) {
+                                            resultsQueue.add(scannedIp)
+                                            isAddedOrUpdated = true
+                                        } else {
+                                            val slowest = currentRegionIps.maxByOrNull { it.latencyMs }
+                                            if (slowest != null && scannedIp.latencyMs < slowest.latencyMs) {
+                                                resultsQueue.remove(slowest)
+                                                resultsQueue.add(scannedIp)
+                                                isAddedOrUpdated = true
+                                            }
+                                        }
+                                    }
 
-                                    if (coloCount.get() < limit) {
-                                        coloCount.incrementAndGet()
-                                        validCounter.incrementAndGet()
-                                        resultsQueue.add(scannedIp)
+                                    if (isAddedOrUpdated) {
+                                        validCounter.set(resultsQueue.size)
                                         
                                         // Real-time callback for DNS sync
                                         val currentList = resultsQueue.toList()
@@ -200,7 +213,8 @@ class IpScannerEngine(private val context: Context) {
                                         if (!isAllRegions && filters.isNotEmpty()) {
                                             val allMet = filters.all { f ->
                                                 val targetLimit = coloLimits[f.uppercase()] ?: maxPerColoGlobal
-                                                (coloCounts[f.uppercase()]?.get() ?: 0) >= targetLimit
+                                                val count = resultsQueue.count { it.dataCenter.equals(f, true) }
+                                                count >= targetLimit
                                             }
                                             if (allMet && config.ipCount < 10000) {
                                                 goalMet.set(true)
