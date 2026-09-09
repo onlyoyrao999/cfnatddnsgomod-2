@@ -147,6 +147,18 @@ class MainViewModel(
     private val _isAutoSyncEnabled = MutableStateFlow(prefs.getBoolean("sc_autoSync", true))
     val isAutoSyncEnabled: StateFlow<Boolean> = _isAutoSyncEnabled.asStateFlow()
 
+    private val syncChannel = kotlinx.coroutines.channels.Channel<List<ScannedIp>>(kotlinx.coroutines.channels.Channel.CONFLATED)
+
+    init {
+        viewModelScope.launch {
+            for (scannedIps in syncChannel) {
+                if (_isAutoSyncEnabled.value) {
+                    autoSyncEnabledDnsRulesRealTime(scannedIps)
+                }
+            }
+        }
+    }
+
     fun setAutoSyncEnabled(enabled: Boolean) {
         _isAutoSyncEnabled.value = enabled
         prefs.edit().putBoolean("sc_autoSync", enabled).apply()
@@ -167,9 +179,7 @@ class MainViewModel(
             val historicalIps = historicalEntities.map { it.ip }
             
             scannerEngine.startScan(config, historicalIps) { currentResults ->
-                if (_isAutoSyncEnabled.value) {
-                    autoSyncEnabledDnsRulesRealTime(currentResults)
-                }
+                syncChannel.trySend(currentResults)
             }
 
             // Save history when scan completes

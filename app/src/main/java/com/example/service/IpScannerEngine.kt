@@ -7,6 +7,7 @@ import com.example.data.network.CloudflareCidrs
 import com.example.data.network.CloudflareLocations
 import com.example.data.network.IpGenerator
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -192,7 +193,7 @@ class IpScannerEngine(private val context: Context) {
                                         
                                         // Real-time callback for DNS sync
                                         val currentList = resultsQueue.toList()
-                                        launch(Dispatchers.Default) {
+                                        CoroutineScope(Dispatchers.Default).launch {
                                             onIpFound(currentList)
                                         }
 
@@ -201,7 +202,7 @@ class IpScannerEngine(private val context: Context) {
                                                 val targetLimit = coloLimits[f.uppercase()] ?: maxPerColoGlobal
                                                 (coloCounts[f.uppercase()]?.get() ?: 0) >= targetLimit
                                             }
-                                            if (allMet) {
+                                            if (allMet && config.ipCount < 10000) {
                                                 goalMet.set(true)
                                             }
                                         }

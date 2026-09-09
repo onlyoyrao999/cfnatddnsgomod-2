@@ -499,23 +499,7 @@ fun ScanConfigCard(
                 scanConfig.coloFilter.split(",").map { it.trim().uppercase() }.filter { it.isNotEmpty() && it != "ALL" }
             } else emptyList()
 
-            if (parsedFilters.isEmpty()) {
-                // Global maxPerColo Slider
-                Spacer(modifier = Modifier.height(16.dp))
-                Column {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("每个地区合格数", style = MaterialTheme.typography.bodyMedium.copy(color = OffWhiteText))
-                        Text("${scanConfig.maxPerColo} 个", style = MaterialTheme.typography.bodyMedium.copy(color = CfOrangePrimary, fontWeight = FontWeight.Bold))
-                    }
-                    Slider(
-                        value = scanConfig.maxPerColo.toFloat(),
-                        onValueChange = { onConfigChange(scanConfig.copy(maxPerColo = it.toInt())) },
-                        valueRange = 1f..100f,
-                        steps = 98,
-                        colors = SliderDefaults.colors(thumbColor = CfOrangePrimary, activeTrackColor = CfOrangePrimary)
-                    )
-                }
-            } else {
+            if (parsedFilters.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(16.dp))
                 parsedFilters.forEach { region ->
                     val regionLimit = scanConfig.coloLimits[region] ?: 10
