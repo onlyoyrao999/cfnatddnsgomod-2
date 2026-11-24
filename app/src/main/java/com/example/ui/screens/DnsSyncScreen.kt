@@ -32,6 +32,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.material.icons.filled.Numbers
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -62,6 +63,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.CfDnsRuleEntity
+import com.example.data.model.CfGlobalConfig
 import com.example.ui.MainViewModel
 import com.example.ui.theme.CfOrangePrimary
 import com.example.ui.theme.DarkSlateCard
@@ -80,7 +82,9 @@ fun DnsSyncScreen(
     dnsRules: List<CfDnsRuleEntity>
 ) {
     val isAutoSyncEnabled by viewModel.isAutoSyncEnabled.collectAsState()
+    val cfGlobalConfig by viewModel.cfGlobalConfig.collectAsState()
     var showRuleDialog by remember { mutableStateOf(false) }
+    var showGlobalConfigDialog by remember { mutableStateOf(false) }
     var editingRule by remember { mutableStateOf<CfDnsRuleEntity?>(null) }
 
     Scaffold(
@@ -159,7 +163,41 @@ fun DnsSyncScreen(
                         text = "设置目标域名，根据节点/机场过滤器（如 HKG、SJC、LAX）自动或手动同步扫描到的 Cloudflare IP。",
                         style = MaterialTheme.typography.bodySmall.copy(color = MutedText)
                     )
-                    
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Global Cloudflare account config: Zone ID / email / API key are
+                    // configured once here and shared by every rule.
+                    OutlinedButton(
+                        onClick = { showGlobalConfigDialog = true },
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth().testTag("cf_global_config_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = null,
+                            tint = CfOrangePrimary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = if (cfGlobalConfig.isConfigured) {
+                                "Cloudflare 账号配置（已配置）"
+                            } else {
+                                "Cloudflare 账号配置（未配置）"
+                            },
+                            color = CfOrangePrimary,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    if (!cfGlobalConfig.isConfigured) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "同步前请先点上面按钮填写 Zone ID 和 API Key，只需填一次，所有域名共用。",
+                            style = MaterialTheme.typography.labelSmall.copy(color = PingRedSlow)
+                        )
+                    }
+
                     Spacer(modifier = Modifier.height(16.dp))
                     
                     Row(
@@ -280,6 +318,106 @@ fun DnsSyncScreen(
             }
         )
     }
+
+    if (showGlobalConfigDialog) {
+        CfGlobalConfigDialog(
+            existingConfig = cfGlobalConfig,
+            onDismiss = { showGlobalConfigDialog = false },
+            onSave = { config ->
+                viewModel.saveCfGlobalConfig(config)
+                showGlobalConfigDialog = false
+            }
+        )
+    }
+}
+
+@Composable
+fun CfGlobalConfigDialog(
+    existingConfig: CfGlobalConfig,
+    onDismiss: () -> Unit,
+    onSave: (CfGlobalConfig) -> Unit
+) {
+    var cfZoneId by remember { mutableStateOf(existingConfig.zoneId) }
+    var cfEmail by remember { mutableStateOf(existingConfig.email) }
+    var cfApiKey by remember { mutableStateOf(existingConfig.apiKey) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = DarkSlateCard,
+        title = {
+            Text(
+                text = "Cloudflare 账号配置",
+                style = MaterialTheme.typography.titleLarge.copy(
+                    fontWeight = FontWeight.Bold,
+                    color = OffWhiteText
+                )
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = "这里填一次，所有域名规则共用，不用每加一个域名都重复填写。",
+                    style = MaterialTheme.typography.bodySmall.copy(color = MutedText)
+                )
+
+                OutlinedTextField(
+                    value = cfZoneId,
+                    onValueChange = { cfZoneId = it },
+                    label = { Text("Cloudflare Zone ID") },
+                    singleLine = true,
+                    leadingIcon = { Icon(Icons.Default.Dns, contentDescription = null, tint = CfOrangePrimary) },
+                    colors = textFieldColors(),
+                    modifier = Modifier.fillMaxWidth().testTag("global_zone_id_input")
+                )
+
+                OutlinedTextField(
+                    value = cfEmail,
+                    onValueChange = { cfEmail = it },
+                    label = { Text("Cloudflare 邮箱 (使用 Token 时可选)") },
+                    singleLine = true,
+                    leadingIcon = { Icon(Icons.Default.Mail, contentDescription = null, tint = CfOrangePrimary) },
+                    colors = textFieldColors(),
+                    modifier = Modifier.fillMaxWidth().testTag("global_cf_email_input")
+                )
+
+                OutlinedTextField(
+                    value = cfApiKey,
+                    onValueChange = { cfApiKey = it },
+                    label = { Text("Cloudflare Global API Key 或 Token") },
+                    singleLine = true,
+                    leadingIcon = { Icon(Icons.Default.Key, contentDescription = null, tint = CfOrangePrimary) },
+                    colors = textFieldColors(),
+                    modifier = Modifier.fillMaxWidth().testTag("global_api_key_input")
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onSave(
+                        CfGlobalConfig(
+                            zoneId = cfZoneId.trim(),
+                            email = cfEmail.trim(),
+                            apiKey = cfApiKey.trim()
+                        )
+                    )
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = CfOrangePrimary)
+            ) {
+                Text("保存配置", color = DarkSlateSurface, fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            OutlinedButton(onClick = onDismiss) {
+                Text("取消", color = OffWhiteText)
+            }
+        }
+    )
 }
 
 @Composable
@@ -379,20 +517,6 @@ fun DnsRuleCard(
                     )
                 }
 
-                // Zone ID Badge
-                if (rule.cfZoneId.isNotBlank()) {
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(DarkSlateSurface)
-                            .padding(horizontal = 10.dp, vertical = 4.dp)
-                    ) {
-                        Text(
-                            text = "区域 ID: ${rule.cfZoneId.take(6)}...",
-                            style = MaterialTheme.typography.labelSmall.copy(color = MutedText)
-                        )
-                    }
-                }
             }
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -493,9 +617,6 @@ fun DnsRuleDialog(
 ) {
     var ruleName by remember { mutableStateOf(existingRule?.ruleName ?: "") }
     var coloFilter by remember { mutableStateOf(existingRule?.coloFilter ?: "") }
-    var cfEmail by remember { mutableStateOf(existingRule?.cfEmail ?: "") }
-    var cfApiKey by remember { mutableStateOf(existingRule?.cfApiKey ?: "") }
-    var cfZoneId by remember { mutableStateOf(existingRule?.cfZoneId ?: "") }
     var cfRecordName by remember { mutableStateOf(existingRule?.cfRecordName ?: "") }
     var maxIpCountText by remember { mutableStateOf((existingRule?.maxIpCount ?: 1).toString()) }
     var isEnabled by remember { mutableStateOf(existingRule?.isEnabled ?: true) }
@@ -565,36 +686,6 @@ fun DnsRuleDialog(
                     modifier = Modifier.fillMaxWidth().testTag("max_ip_count_input")
                 )
 
-                OutlinedTextField(
-                    value = cfZoneId,
-                    onValueChange = { cfZoneId = it },
-                    label = { Text("Cloudflare Zone ID") },
-                    singleLine = true,
-                    leadingIcon = { Icon(Icons.Default.Dns, contentDescription = null, tint = CfOrangePrimary) },
-                    colors = textFieldColors(),
-                    modifier = Modifier.fillMaxWidth().testTag("zone_id_input")
-                )
-
-                OutlinedTextField(
-                    value = cfEmail,
-                    onValueChange = { cfEmail = it },
-                    label = { Text("Cloudflare 邮箱 (使用 Token 时可选)") },
-                    singleLine = true,
-                    leadingIcon = { Icon(Icons.Default.Mail, contentDescription = null, tint = CfOrangePrimary) },
-                    colors = textFieldColors(),
-                    modifier = Modifier.fillMaxWidth().testTag("cf_email_input")
-                )
-
-                OutlinedTextField(
-                    value = cfApiKey,
-                    onValueChange = { cfApiKey = it },
-                    label = { Text("Cloudflare Global API Key 或 Token") },
-                    singleLine = true,
-                    leadingIcon = { Icon(Icons.Default.Key, contentDescription = null, tint = CfOrangePrimary) },
-                    colors = textFieldColors(),
-                    modifier = Modifier.fillMaxWidth().testTag("api_key_input")
-                )
-
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -622,9 +713,12 @@ fun DnsRuleDialog(
                         id = existingRule?.id ?: 0L,
                         ruleName = ruleName,
                         coloFilter = coloFilter,
-                        cfEmail = cfEmail,
-                        cfApiKey = cfApiKey,
-                        cfZoneId = cfZoneId,
+                        // Credentials now live in the global Cloudflare config and are
+                        // applied at sync time; keep any legacy values already stored
+                        // on this rule so nothing is lost.
+                        cfEmail = existingRule?.cfEmail ?: "",
+                        cfApiKey = existingRule?.cfApiKey ?: "",
+                        cfZoneId = existingRule?.cfZoneId ?: "",
                         cfRecordName = cfRecordName,
                         maxIpCount = parsedCount,
                         isEnabled = isEnabled,

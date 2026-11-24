@@ -49,6 +49,20 @@ data class ScanConfig(
 )
 
 /**
+ * Global Cloudflare account configuration, shared by all DNS sync rules.
+ * Configured once in the Sync screen; individual rules no longer carry
+ * their own Zone ID / email / API key.
+ */
+data class CfGlobalConfig(
+    val zoneId: String = "",
+    val email: String = "",
+    val apiKey: String = ""
+) {
+    val isConfigured: Boolean
+        get() = zoneId.isNotBlank() && apiKey.isNotBlank()
+}
+
+/**
  * Status of the local TCP proxy relay server
  */
 data class ProxyStatus(

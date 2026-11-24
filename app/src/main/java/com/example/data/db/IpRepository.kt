@@ -17,12 +17,18 @@ class IpRepository(
 
     suspend fun saveIp(entity: ScannedIpEntity) {
         scannedIpDao.insertIp(entity)
-        scannedIpDao.trimToTop100Newest()
+        scannedIpDao.trimToTop1000Newest()
     }
 
     suspend fun saveIps(entities: List<ScannedIpEntity>) {
         scannedIpDao.insertIps(entities)
-        scannedIpDao.trimToTop100Newest()
+        scannedIpDao.trimToTop1000Newest()
+    }
+
+    suspend fun deleteIps(ips: Collection<String>) {
+        for (ip in ips) {
+            scannedIpDao.deleteIpByAddress(ip)
+        }
     }
 
     suspend fun toggleFavorite(ip: String, isFavorite: Boolean) {

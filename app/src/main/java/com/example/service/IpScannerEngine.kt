@@ -68,9 +68,10 @@ class IpScannerEngine(private val context: Context) {
     }
 
     suspend fun startScan(
-        config: ScanConfig, 
+        config: ScanConfig,
         historicalIps: List<String> = emptyList(),
-        onIpFound: suspend (List<ScannedIp>) -> Unit = {}
+        onIpFound: suspend (List<ScannedIp>) -> Unit = {},
+        onHistoricalResult: suspend (tested: List<String>, alive: Set<String>) -> Unit = { _, _ -> }
     ) = withContext(Dispatchers.IO) {
         isCancelled = false
         _progressState.value = _progressState.value.copy(
@@ -109,12 +110,18 @@ class IpScannerEngine(private val context: Context) {
         var hasTestedHistorical = false
 
         while (!isCancelled && !goalMet.get()) {
+            var batchIsHistorical = false
+            var historicalTested: List<String> = emptyList()
+            val historicalAlive = ConcurrentHashMap.newKeySet<String>()
+            val historicalActuallyTested = ConcurrentHashMap.newKeySet<String>()
             val candidateIps = if (!hasTestedHistorical && historicalIps.isNotEmpty()) {
                 hasTestedHistorical = true
-                val filteredHistorical = historicalIps.filter { 
-                    (isIpv6 && it.contains(":")) || (!isIpv6 && it.contains(".")) 
+                val filteredHistorical = historicalIps.filter {
+                    (isIpv6 && it.contains(":")) || (!isIpv6 && it.contains("."))
                 }
                 if (filteredHistorical.isNotEmpty()) {
+                    batchIsHistorical = true
+                    historicalTested = filteredHistorical
                     filteredHistorical
                 } else {
                     if (isIpv6) IpGenerator.getRandomIPv6s(cidrs, count = config.ipCount)
@@ -162,6 +169,9 @@ class IpScannerEngine(private val context: Context) {
                         semaphore.withPermit {
                             if (isCancelled || goalMet.get()) return@withPermit
 
+                            if (batchIsHistorical) {
+                                historicalActuallyTested.add(ipAddr)
+                            }
                             val scannedIp = testIpAddress(
                                 ip = ipAddr,
                                 port = config.port,
@@ -174,6 +184,11 @@ class IpScannerEngine(private val context: Context) {
                             val currentScanned = scannedCounter.incrementAndGet()
 
                             if (scannedIp != null && scannedIp.isValid && !scannedIp.dataCenter.equals("CF", ignoreCase = true)) {
+                                // Passed the real connectivity test: this historical IP is
+                                // alive, regardless of colo filter / per-colo quota below.
+                                if (batchIsHistorical) {
+                                    historicalAlive.add(scannedIp.ip)
+                                }
                                 var matchesFilter = true
                                 if (!isAllRegions && filters.isNotEmpty()) {
                                     matchesFilter = filters.any { filter ->
@@ -245,6 +260,13 @@ class IpScannerEngine(private val context: Context) {
                         }
                     }
                 }
+            }
+
+            // Report the historical batch outcome so dead IPs can be pruned from
+            // the local store. Skipped when the scan was cancelled mid-batch,
+            // because untested IPs must not be treated as dead.
+            if (batchIsHistorical && !isCancelled) {
+                onHistoricalResult(historicalActuallyTested.toList(), historicalAlive.toSet())
             }
 
             // Only scan once if ALL is selected, unless ipCount is 10000 (Unlimited)

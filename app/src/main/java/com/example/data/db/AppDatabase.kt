@@ -43,8 +43,8 @@ interface ScannedIpDao {
     @Query("DELETE FROM saved_ips")
     suspend fun clearAll()
 
-    @Query("DELETE FROM saved_ips WHERE ip NOT IN (SELECT ip FROM saved_ips ORDER BY testedAt DESC LIMIT 100)")
-    suspend fun trimToTop100Newest()
+    @Query("DELETE FROM saved_ips WHERE ip NOT IN (SELECT ip FROM saved_ips ORDER BY testedAt DESC LIMIT 1000)")
+    suspend fun trimToTop1000Newest()
 }
 
 @Dao

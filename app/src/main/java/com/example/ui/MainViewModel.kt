@@ -9,6 +9,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.db.IpRepository
 import com.example.data.model.CfDnsRuleEntity
+import com.example.data.model.CfGlobalConfig
 import com.example.data.model.ProxyStatus
 import com.example.data.model.ScanConfig
 import com.example.data.model.ScanHistoryEntity
@@ -147,6 +148,57 @@ class MainViewModel(
     private val _isAutoSyncEnabled = MutableStateFlow(prefs.getBoolean("sc_autoSync", true))
     val isAutoSyncEnabled: StateFlow<Boolean> = _isAutoSyncEnabled.asStateFlow()
 
+    // Global Cloudflare account config (Zone ID / email / API key), shared by all rules.
+    private fun loadCfGlobalConfig(): CfGlobalConfig = CfGlobalConfig(
+        zoneId = prefs.getString("cf_global_zone_id", "") ?: "",
+        email = prefs.getString("cf_global_email", "") ?: "",
+        apiKey = prefs.getString("cf_global_api_key", "") ?: ""
+    )
+
+    private val _cfGlobalConfig = MutableStateFlow(loadCfGlobalConfig())
+    val cfGlobalConfig: StateFlow<CfGlobalConfig> = _cfGlobalConfig.asStateFlow()
+
+    fun saveCfGlobalConfig(config: CfGlobalConfig) {
+        _cfGlobalConfig.value = config
+        prefs.edit().apply {
+            putString("cf_global_zone_id", config.zoneId.trim())
+            putString("cf_global_email", config.email.trim())
+            putString("cf_global_api_key", config.apiKey.trim())
+        }.apply()
+    }
+
+    init {
+        // One-time migration: if the global config is still empty, seed it from
+        // the first existing rule that carries credentials, so users upgrading
+        // from per-rule credentials do not have to type them again.
+        viewModelScope.launch {
+            if (!_cfGlobalConfig.value.isConfigured) {
+                val rules = repository.dnsRules.first()
+                val seed = rules.firstOrNull { it.cfApiKey.isNotBlank() }
+                if (seed != null) {
+                    saveCfGlobalConfig(
+                        CfGlobalConfig(
+                            zoneId = seed.cfZoneId,
+                            email = seed.cfEmail,
+                            apiKey = seed.cfApiKey
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    /** Effective rule for syncing: global credentials win, per-rule values are the fallback. */
+    private fun withGlobalCredentials(rule: CfDnsRuleEntity): CfDnsRuleEntity {
+        val global = _cfGlobalConfig.value
+        if (!global.isConfigured) return rule
+        return rule.copy(
+            cfZoneId = global.zoneId.ifBlank { rule.cfZoneId },
+            cfEmail = global.email.ifBlank { rule.cfEmail },
+            cfApiKey = global.apiKey.ifBlank { rule.cfApiKey }
+        )
+    }
+
     private val syncChannel = kotlinx.coroutines.channels.Channel<List<ScannedIp>>(kotlinx.coroutines.channels.Channel.CONFLATED)
 
     init {
@@ -178,9 +230,25 @@ class MainViewModel(
             val historicalEntities = repository.savedIps.first() 
             val historicalIps = historicalEntities.map { it.ip }
             
-            scannerEngine.startScan(config, historicalIps) { currentResults ->
-                syncChannel.trySend(currentResults)
-            }
+            scannerEngine.startScan(
+                config,
+                historicalIps,
+                onIpFound = { currentResults ->
+                    syncChannel.trySend(currentResults)
+                },
+                onHistoricalResult = { tested, alive ->
+                    // Dead historical IPs are removed from the local store so the
+                    // next scan does not waste time re-testing them. Guard: if not
+                    // a single historical IP passed, assume a network outage and
+                    // keep the whole store untouched.
+                    if (alive.isNotEmpty()) {
+                        val dead = tested.filter { !alive.contains(it) }
+                        if (dead.isNotEmpty()) {
+                            repository.deleteIps(dead)
+                        }
+                    }
+                }
+            )
 
             // Save history when scan completes
             val state = scannerEngine.progressState.value
@@ -269,7 +337,7 @@ class MainViewModel(
             }
 
             val ipSummaryStr = targetIps.joinToString(", ")
-            when (val result = dnsSyncService.syncDnsRecords(rule, targetIps)) {
+            when (val result = dnsSyncService.syncDnsRecords(withGlobalCredentials(rule), targetIps)) {
                 is SyncResult.Success -> {
                     repository.updateDnsRuleSyncResult(
                         rule.id,
@@ -311,7 +379,7 @@ class MainViewModel(
                     val lastSynced = ruleLastSyncedIps[rule.id]
                     if (targetIps != lastSynced) {
                         val ipSummaryStr = targetIps.joinToString(", ")
-                        when (val result = dnsSyncService.syncDnsRecords(rule, targetIps)) {
+                        when (val result = dnsSyncService.syncDnsRecords(withGlobalCredentials(rule), targetIps)) {
                             is SyncResult.Success -> {
                                 repository.updateDnsRuleSyncResult(rule.id, result.message, ipSummaryStr, System.currentTimeMillis())
                                 ruleLastSyncedIps[rule.id] = targetIps
@@ -332,7 +400,7 @@ class MainViewModel(
             val targetIps = findBestMatchingIps(rule, scannedIps, rule.maxIpCount)
             if (targetIps.isNotEmpty()) {
                 val ipSummaryStr = targetIps.joinToString(", ")
-                when (val result = dnsSyncService.syncDnsRecords(rule, targetIps)) {
+                when (val result = dnsSyncService.syncDnsRecords(withGlobalCredentials(rule), targetIps)) {
                     is SyncResult.Success -> {
                         repository.updateDnsRuleSyncResult(
                             rule.id,
