@@ -168,7 +168,7 @@ fun ScannerScreen(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        val displayResults = remember(scanProgress.results, scanConfig.coloFilter) {
+        val displayResults = remember(scanProgress.results, scanConfig.coloFilter, scanConfig.coloLimits, scanConfig.maxPerColo) {
             val uniqueResults = scanProgress.results.distinctBy { it.ip }
             val filteredResults = if (scanConfig.coloFilter.isNotBlank()) {
                 val filters = scanConfig.coloFilter.split(",").map { it.trim().uppercase() }
@@ -183,9 +183,14 @@ fun ScannerScreen(
                 uniqueResults
             }
             
-            // Limit to max 10 IPs per datacenter
+            // Limit per datacenter to that region's configured quota
+            // (coloLimits for the region, falling back to maxPerColo)
+            val normalizedColoLimits = scanConfig.coloLimits.mapKeys { it.key.uppercase() }
             filteredResults.groupBy { it.dataCenter.uppercase() }
-                .flatMap { it.value.sortedBy { ip -> ip.latencyMs }.take(10) }
+                .flatMap { entry ->
+                    val limit = normalizedColoLimits[entry.key] ?: scanConfig.maxPerColo
+                    entry.value.sortedBy { ip -> ip.latencyMs }.take(limit)
+                }
                 .sortedBy { it.latencyMs }
         }
 
